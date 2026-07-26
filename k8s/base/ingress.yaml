@@ -1,0 +1,19 @@
+# Ingress ESTÁNDAR (networking.k8s.io), no el CRD del ingress controller.
+# El host lo fija cada overlay: <app>.<entorno>.localtest.me.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: catalogo-web
+spec:
+  ingressClassName: traefik
+  rules:
+    - host: catalogo-web.local.localtest.me
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: catalogo-web
+                port:
+                  number: 80

@@ -1,0 +1,20 @@
+# Presupuesto de `local`: aquí dentro corre un DEV SERVER en watch, que en
+# Angular se va con facilidad a 1-2 GB durante la compilación. Un limit
+# apretado mata el pod por OOM a mitad de compilar y el síntoma parece un
+# fallo de la herramienta de sincronización, no falta de memoria.
+# Ver PLATFORM.md §8.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: catalogo-web
+spec:
+  template:
+    spec:
+      containers:
+        - name: app
+          resources:
+            requests:
+              cpu: 200m
+              memory: 1Gi
+            limits:
+              memory: 2560Mi

@@ -1,0 +1,17 @@
+# Configuración NO secreta de la app (PLATFORM.md §5).
+#
+# Ojo con Angular: una SPA corre en el NAVEGADOR, así que una variable de
+# entorno del contenedor NO llega al código de la aplicación. Aquí el
+# ConfigMap tiene dos usos distintos:
+#   - claves consumidas por el PROCESO del contenedor (envFrom), y
+#   - la configuración que ve el NAVEGADOR, que viaja como fichero
+#     `public/config.json` servido en /config.json y descargado por la app al
+#     arrancar. La imagen trae un config.json por defecto; para sobreescribirlo
+#     por entorno se monta un ConfigMap encima (ver PLATFORM.md §5). Ese es el
+#     único camino real para configurar una SPA sin reconstruir la imagen.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: catalogo-web-config
+data:
+  APP_NAME: catalogo-web

@@ -1,0 +1,107 @@
+# ---------------------------------------------------------------------------
+# Skaffold — el bucle rápido (inner loop) de `ns local`. Contrato: PLATFORM.md §15.
+#
+# Dos velocidades: ITERAR código son segundos y lo gobierna este fichero;
+# VALIDAR el empaquetado son minutos y lo gobierna GitOps sobre `pre`/`pro`.
+# `local` es territorio exclusivo de Skaffold: ArgoCD no lo toca (PLATFORM.md §11).
+#
+# Arranque:   skaffold dev            (Ctrl-C para parar; borra lo desplegado)
+#             skaffold dev --no-prune --keep-running-on-failure
+# Una vez:    skaffold run            (despliega y sale, sin watch)
+# Limpiar:    skaffold delete
+# ---------------------------------------------------------------------------
+apiVersion: skaffold/v4beta13
+kind: Config
+metadata:
+  name: catalogo-web
+
+build:
+  # El registry local habla HTTP plano. El demonio de Docker ya lo sabe (lo
+  # configura el bootstrap), pero Skaffold usa su PROPIO cliente de registry
+  # para resolver el digest tras el push y no hereda esa configuracion.
+  # Sin esta lista, el build TERMINA BIEN, la imagen SE PUBLICA, y justo
+  # despues falla con
+  #   http: server gave HTTP response to HTTPS client
+  # que se lee como un fallo de push cuando el push ya habia ocurrido.
+  insecureRegistries:
+    - registry.localtest.me:5111
+  local:
+    # push: true es OBLIGATORIO. El cluster es k3d: su containerd no ve el
+    # demonio de Docker del host. Sin push, el pod queda en ErrImagePull con un
+    # mensaje que parece de red y es de topología.
+    push: true
+    useBuildkit: true
+    concurrency: 1
+
+  # inputDigest: el tag es el hash del contenido sincronizable. Cumple §2
+  # ("un tag, un contenido") de forma estricta: dos builds distintos NUNCA
+  # comparten tag y dos builds idénticos no publican dos veces.
+  # En `pre`/`pro` el tag lo escribe CI y es el git sha (§2) — ahí el commit
+  # ya identifica el contenido; aquí, con árbol sucio, no lo identificaría.
+  tagPolicy:
+    inputDigest: {}
+
+  artifacts:
+    - image: registry.localtest.me:5111/catalogo-web
+      context: .
+      docker:
+        dockerfile: Dockerfile
+        # `dev` = la etapa que arranca `ng serve`. SIN ESTO NO HAY HOT RELOAD:
+        # la etapa `prod` sirve el estático tras nginx y sincronizar un fichero
+        # dentro del pod no tendría ningún efecto (PLATFORM.md §6).
+        target: dev
+
+      # ---- Qué se sincroniza en caliente y qué NO -------------------------
+      # `manual` y no `infer`: infer deduce los destinos de las instrucciones
+      # COPY del Dockerfile, y aquí el COPY es un `COPY . .` — deduciría que
+      # TODO es sincronizable, incluido package.json. Explícito y estrecho.
+      sync:
+        manual:
+          - src: src/**/*
+            dest: /app
+          - src: public/**/*
+            dest: /app
+          - src: angular.json
+            dest: /app
+          - src: tsconfig*.json
+            dest: /app
+      # NO se sincroniza, a propósito:
+      #   - node_modules  -> vive en la imagen. Sincronizarlo desde Windows
+      #     metería binarios compilados para la plataforma equivocada dentro de
+      #     un contenedor Alpine/musl: el dev server arranca y revienta con un
+      #     error de módulo nativo que no menciona Windows por ninguna parte.
+      #   - .angular/cache -> caché de compilación del host; pisar la del
+      #     contenedor produce recompilaciones incoherentes.
+      #   - package.json / package-lock.json -> NO sincronizables A PROPÓSITO.
+      #     Al no estar en la lista, tocarlos dispara RECONSTRUCCIÓN de imagen
+      #     (npm ci) en vez de una copia. Si se sincronizaran, el pod correría
+      #     con un manifiesto de dependencias que no corresponde a ningún
+      #     `npm ci`: un estado que no existe en ninguna imagen.
+      #   Ambos están además en `.dockerignore` (node_modules, .angular), que es
+      #   lo que Skaffold usa para decidir qué vigila.
+
+manifests:
+  kustomize:
+    paths:
+      - k8s/overlays/local
+
+deploy:
+  kubectl: {}
+  # El dev server compila el proyecto entero antes de responder a /health.
+  # La startupProbe da hasta 5 min (PLATFORM.md §4); el status check de
+  # Skaffold tiene que darle al menos lo mismo o abortará un arranque sano.
+  statusCheckDeadlineSeconds: 600
+
+# Rango 19040-19049 reservado en PORTS.md. Convención: base+0 = HTTP.
+# Angular no tiene depurador de servidor (corre en el navegador), así que
+# base+1 queda libre.
+# El acceso normal es por el ingress —http://catalogo-web.local.localtest.me— que sí
+# tiene HMR funcionando (§14.2). Este forward es la vía de diagnóstico cuando
+# se sospecha del ingress; OJO: por localhost:19040 el puerto público (19040)
+# difiere del interno (8080) y el websocket de HMR puede no conectar.
+portForward:
+  - resourceType: service
+    resourceName: catalogo-web
+    namespace: local
+    port: 80
+    localPort: 19040

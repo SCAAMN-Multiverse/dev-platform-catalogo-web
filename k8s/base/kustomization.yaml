@@ -1,0 +1,19 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+# La base NO se aplica directamente: no tiene namespace ni host definitivo.
+# Se aplica siempre un overlay.
+resources:
+  - configmap.yaml
+  - deployment.yaml
+  - service.yaml
+  - ingress.yaml
+
+# Etiquetas comunes obligatorias del contrato (PLATFORM.md §7).
+labels:
+  - includeSelectors: false
+    pairs:
+      app.kubernetes.io/name: catalogo-web
+      app.kubernetes.io/part-of: dev-platform
+      app.kubernetes.io/component: frontend
+      app.kubernetes.io/managed-by: kustomize

@@ -1,0 +1,22 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: pro
+
+resources:
+  - ../../base
+
+# pro corre la etapa `prod` (estático servido por nginx). El tag es el git sha
+# del commit promocionado y lo escribe CI: NUNCA se edita a mano ni se usa un
+# tag móvil (PLATFORM.md §2).
+images:
+  - name: registry.localtest.me:5111/catalogo-web
+    newTag: REPLACED_BY_CI
+
+patches:
+  - path: ingress-host.yaml
+  - path: resources.yaml
+
+labels:
+  - includeSelectors: false
+    pairs:
+      app.kubernetes.io/instance: catalogo-web-pro

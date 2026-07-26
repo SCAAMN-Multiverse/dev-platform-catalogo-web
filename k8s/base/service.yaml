@@ -1,0 +1,15 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: catalogo-web
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: catalogo-web
+  ports:
+    # El Service SIEMPRE expone el 80, sea cual sea el puerto del contenedor
+    # (PLATFORM.md §3). Así el Ingress y cualquier consumidor interno hablan
+    # igual con una app Angular (8080) que con una NestJS (3000).
+    - name: http
+      port: 80
+      targetPort: http

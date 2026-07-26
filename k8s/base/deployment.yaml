@@ -1,0 +1,51 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: catalogo-web
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: catalogo-web
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: catalogo-web
+    spec:
+      containers:
+        - name: app
+          # El tag lo reescribe quien despliega (Skaffold en `local`, CI en
+          # pre/pro): SIEMPRE un git sha, nunca `latest`. Ver PLATFORM.md §2.
+          image: registry.localtest.me:5111/catalogo-web:REPLACED_BY_BUILD
+          ports:
+            - name: http
+              containerPort: 8080
+          env:
+            - name: APP_ENV
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+          envFrom:
+            - configMapRef:
+                name: catalogo-web-config
+          # Probes contra /health (PLATFORM.md §4).
+          # startupProbe existe para que el arranque LENTO del dev server (el
+          # primer `ng serve` compila y tarda decenas de segundos) no dispare
+          # liveness. Sin ella, el kubelet mata el pod a mitad de la primera
+          # compilación y el síntoma parece un fallo de la herramienta de sync.
+          startupProbe:
+            httpGet: { path: /health, port: http }
+            periodSeconds: 5
+            failureThreshold: 60
+          readinessProbe:
+            httpGet: { path: /health, port: http }
+            periodSeconds: 10
+          livenessProbe:
+            httpGet: { path: /health, port: http }
+            periodSeconds: 20
+          resources:
+            requests:
+              cpu: 50m
+              memory: 256Mi
+            limits:
+              memory: 512Mi

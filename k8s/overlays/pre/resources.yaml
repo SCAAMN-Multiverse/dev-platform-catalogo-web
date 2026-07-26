@@ -1,0 +1,18 @@
+# Presupuesto de `pre`: aquí NO hay dev server, solo nginx sirviendo ficheros
+# estáticos. Por eso el presupuesto es un orden de magnitud menor que el de
+# `local`.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: catalogo-web
+spec:
+  template:
+    spec:
+      containers:
+        - name: app
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              memory: 192Mi
