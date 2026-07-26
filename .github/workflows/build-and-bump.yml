@@ -1,70 +1,68 @@
 # ---------------------------------------------------------------------------
-# CI — construir la imagen, publicarla, y escribir el tag en el overlay.
+# CI — construir la imagen UNA vez, publicarla, y escribir el tag en los DOS
+# overlays de la rama `release`.
 #
 # Es el lazo del Marco 12: **el lazo lo cierra un commit, no un `apply`**. Este
 # workflow NO habla con el cluster y no tiene credenciales de Kubernetes; su
 # permiso máximo es escribir en este mismo repo. Quien despliega es ArgoCD, que
 # reconcilia el repo contra el cluster en su siguiente pasada.
 #
-#   push a `release`  ->  imagen nueva  ->  bump de k8s/overlays/pre  ->  ns pre
-#   push a `main`     ->  imagen nueva  ->  bump de k8s/overlays/pro  ->  ns pro
-#
-# La promoción de `pre` a `pro` es un **merge** de `release` a `main`. No hay
-# ninguna acción sobre el cluster en ningún punto del camino.
+#   push a `release`  ->  imagen nueva  ->  bump de k8s/overlays/{pre,pro}  ->  ns pre
+#   merge release -> main (por Pull Request)  ------------------------------->  ns pro
 #
 # ===========================================================================
-# CÓMO SE CORTA EL BUCLE DE REALIMENTACIÓN — la decisión de diseño de esta fase
+# POR QUE CI YA NO SE DISPARA EN `main` — el gate de promocion (PLATFORM.md §17)
 # ===========================================================================
-# El commit de bump que escribe este workflow va al MISMO repo y a la MISMA
-# rama que lo dispara. Sin nada más, ese commit dispararía el workflow otra vez,
-# que escribiría otro commit, indefinidamente: 400 commits automáticos en una
-# tarde.
+# `main` esta protegida por un ruleset que PROHIBE el push directo: solo se
+# escribe por Pull Request. Si este workflow siguiera disparandose en `main`, su
+# commit de bump seria un push directo y la forja lo rechazaria: el gate
+# romperia la promocion a `pro`.
 #
+# La solucion NO es una excepcion para el bot. Ademas de ser peor diseno, no
+# esta disponible en este plan: el bypass por la app `GitHub Actions` exige un
+# ruleset de ORGANIZACION, y eso es GitHub Team (verificado: HTTP 403
+# "Upgrade to GitHub Team"). La solucion es que **el bot no necesite escribir en
+# `main`**: el tag de `pro` se escribe aqui, en `release`, y llega a `main`
+# dentro del propio merge de promocion.
+#
+# Efecto colateral que es en realidad una CORRECCION de semantica, no un apano:
+# antes, el push a `main` reconstruia la imagen desde el sha del commit de
+# merge, asi que **`pro` no corria los bits que se habian validado en `pre`**:
+# corria otro build del mismo codigo, con otro tag. Ahora `pre` y `pro` corren
+# LA MISMA imagen, y promocionar deja de significar "volver a construir" para
+# significar lo que el Marco 12 dice que significa: un merge.
+#
+# ===========================================================================
+# COMO SE CORTA EL BUCLE DE REALIMENTACION
+# ===========================================================================
 # Se corta con `paths-ignore` sobre `k8s/overlays/**`: **el disparador y lo que
-# el write-back escribe son conjuntos de ficheros disjuntos**. Un push que sólo
-# toca overlays no dispara nada. Es un corte ESTRUCTURAL —lo evalúa la forja
-# sobre la lista real de ficheros cambiados—, no una convención textual como
-# `[skip ci]` en el mensaje del commit, que cualquiera rompe sin darse cuenta y
-# que no deja rastro de por qué estaba ahí.
-#
-# Consecuencia buscada: tocar un overlay a mano (subir memoria en `pre`, por
-# ejemplo) NO reconstruye la imagen. Es correcto: no ha cambiado ningún código,
-# y ArgoCD sincroniza igual el cambio del manifiesto.
+# el write-back escribe son conjuntos de ficheros disjuntos**. Un push que solo
+# toca overlays no dispara nada. Es un corte ESTRUCTURAL —lo evalua la forja
+# sobre la lista real de ficheros cambiados—, no una convencion textual como
+# `[skip ci]` en el mensaje del commit, que cualquiera rompe sin darse cuenta.
 #
 # ===========================================================================
-# DÓNDE CORRE — y por qué no puede correr en un runner de GitHub
+# DONDE CORRE — y por que no puede correr en un runner de GitHub
 # ===========================================================================
 # El registry es `registry.localtest.me:5111`, que resuelve a **127.0.0.1**.
 # Desde un runner hospedado por GitHub eso es el propio runner, donde no hay
-# ningún registry: el `docker push` fallaría con "connection refused" tras
-# haber construido la imagen entera. Por eso `runs-on: [self-hosted, dev-platform]`.
-#
-# Requisitos del runner, que hay que verificar ANTES de dar esto por bueno:
-#   1. Corre en la MISMA máquina que el cluster k3d (o en su WSL2), porque el
-#      nombre del registry sólo resuelve a algo útil allí.
-#   2. Tiene acceso al demonio de Docker que publica el puerto 5111.
-#   3. Su demonio de Docker admite el registry por HTTP plano
-#      (`insecure-registries: ["registry.localtest.me:5111"]` en el daemon.json,
-#      o el mirror que ya instala el bootstrap de la plataforma).
-#   4. Tiene la etiqueta `dev-platform`, para no repartir estos trabajos a
-#      cualquier runner autoalojado de la organización.
+# ningun registry: el `docker push` fallaria con "connection refused" tras haber
+# construido la imagen entera. Por eso `runs-on: [self-hosted, dev-platform]`.
 # ---------------------------------------------------------------------------
 name: build-and-bump
 
 on:
   push:
-    branches: [release, main]
+    branches: [release]
     paths-ignore:
-      # AQUÍ SE CORTA EL BUCLE. No quitar sin sustituirlo por otro corte.
+      # AQUI SE CORTA EL BUCLE. No quitar sin sustituirlo por otro corte.
       - 'k8s/overlays/**'
 
 permissions:
-  # Escribir en el repo, y nada más. Ni `packages`, ni nada del cluster.
+  # Escribir en el repo, y nada mas. Ni `packages`, ni nada del cluster.
   contents: write
 
 concurrency:
-  # Dos pushes seguidos a la misma rama escribirían dos bumps a la vez y el
-  # segundo `git push` fallaría por no-fast-forward. Se serializa por rama.
   group: build-and-bump-${{ github.ref }}
   cancel-in-progress: false
 
@@ -89,48 +87,42 @@ jobs:
         run: |
           SHA=$(git rev-parse --short=12 HEAD)
           echo "sha=$SHA" >> "$GITHUB_OUTPUT"
-          # release -> pre ; main -> pro. El mapeo rama->entorno vive también
-          # en las etiquetas `platform/source-branch` de los namespaces.
-          case "${{ github.ref_name }}" in
-            release) echo "env=pre" >> "$GITHUB_OUTPUT" ;;
-            main)    echo "env=pro" >> "$GITHUB_OUTPUT" ;;
-            *) echo "rama no mapeada a ningún entorno"; exit 1 ;;
-          esac
 
       - name: Construir y publicar la imagen
         shell: bash
         run: |
           set -euo pipefail
           REF="$REGISTRY/$APP:${{ steps.tag.outputs.sha }}"
-          # `--target prod`: pre y pro sirven el artefacto de producción. La
+          # `--target prod`: pre y pro sirven el artefacto de produccion. La
           # etapa `dev` es exclusiva del inner loop (PLATFORM.md §6).
           docker build --target prod -t "$REF" .
           docker push "$REF"
           # UN TAG, UN CONTENIDO: se comprueba contra el registry que el tag
           # existe de verdad tras el push. NO se usa `docker manifest inspect`:
-          # habla HTTPS y este registry es HTTP plano, asi que fallaria con
-          # "server gave HTTP response to HTTPS client" DESPUES de un push
-          # correcto — el mismo sintoma enganoso que dio Skaffold en la Fase 3.
-          # OJO CON EL `Accept`: buildkit publica un INDICE (manifest list) con
-          # la attestation, no un manifest suelto. Si el Accept solo pide los
-          # tipos de manifest, el registry responde 404 y curl sale con 22 —
-          # justo despues de un push que ha ido bien. Hay que pedir los cuatro.
-          curl -sf "http://$REGISTRY/v2/$APP/manifests/${{ steps.tag.outputs.sha }}"             -H 'Accept: application/vnd.oci.image.index.v1+json, application/vnd.docker.distribution.manifest.list.v2+json, application/vnd.oci.image.manifest.v1+json, application/vnd.docker.distribution.manifest.v2+json' >/dev/null
+          # habla HTTPS y este registry es HTTP plano. Y OJO CON EL `Accept`:
+          # buildkit publica un INDICE (manifest list) con la attestation; si el
+          # Accept solo pide los tipos de manifest, el registry responde 404
+          # justo despues de un push que ha ido bien.
+          curl -sf "http://$REGISTRY/v2/$APP/manifests/${{ steps.tag.outputs.sha }}" \
+            -H 'Accept: application/vnd.oci.image.index.v1+json, application/vnd.docker.distribution.manifest.list.v2+json, application/vnd.oci.image.manifest.v1+json, application/vnd.docker.distribution.manifest.v2+json' >/dev/null
 
-      - name: Escribir el tag en el overlay del entorno
+      - name: Escribir el tag en los overlays de pre y pro
         shell: bash
         run: |
           set -euo pipefail
-          ENV="${{ steps.tag.outputs.env }}"
           SHA="${{ steps.tag.outputs.sha }}"
-          K="k8s/overlays/$ENV/kustomization.yaml"
           # El marcador REPLACED_BY_CI del repo se sustituye por el sha real.
           # Nunca hay en el repo un tag "plausible" que pueda desplegarse por
           # accidente (PLATFORM.md §2, regla dura 3).
-          sed -i -E "s#^(\s*newTag:).*#\1 $SHA#" "$K"
-          git diff --quiet "$K" && { echo "el overlay ya apunta a $SHA"; exit 0; }
+          for E in pre pro; do
+            sed -i -E "s#^(\s*newTag:).*#\1 $SHA#" "k8s/overlays/$E/kustomization.yaml"
+          done
+          git diff --quiet k8s/overlays && { echo "los overlays ya apuntan a $SHA"; exit 0; }
           git config user.name  "ci[bot]"
           git config user.email "ci@users.noreply.github.com"
-          git add "$K"
-          git commit -m "chore(deploy): $ENV -> $SHA"
+          git add k8s/overlays/pre/kustomization.yaml k8s/overlays/pro/kustomization.yaml
+          # Este commit despliega `pre`. El overlay de `pro` queda escrito en
+          # `release` pero NO desplegado: `pro` lo lee de `main`, y a `main` solo
+          # se llega abriendo el PR de promocion.
+          git commit -m "chore(deploy): pre -> $SHA (pro listo para promocionar)"
           git push origin "HEAD:${{ github.ref_name }}"

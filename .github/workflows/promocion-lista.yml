@@ -1,0 +1,80 @@
+# ---------------------------------------------------------------------------
+# GATE — comprobacion previa al merge de promocion a `pro`.
+#
+# Corre SOLO en Pull Requests contra `main`, y es el status check obligatorio
+# del ruleset `promocion-a-pro` (PLATFORM.md §17).
+#
+# QUE COMPRUEBA, y por que esto y no "que el CI de release este verde":
+#
+# El check obvio seria exigir que el workflow `build-and-bump` haya pasado en la
+# punta de `release`. NO FUNCIONA, y el modo de fallo es el peor: la punta de
+# `release` es casi siempre el commit de bump, que `paths-ignore` excluye a
+# proposito, asi que ese sha NO TIENE NINGUN check run. GitHub no lo interpreta
+# como "no aplica" sino como "esperando", y el PR se queda bloqueado para
+# siempre sin que nada falle. El corte del bucle y el status check obligatorio
+# se muerden: hay que saberlo antes, no descubrirlo con la promocion parada.
+#
+# Lo que si se puede comprobar sin depender de ningun check run —y ademas es lo
+# que de verdad importa— es que **el overlay de `pro` que se va a promocionar
+# apunta a una imagen construida de verdad**:
+#
+#   1. `newTag` no es el marcador `REPLACED_BY_CI` (CI nunca corrio en esta rama).
+#   2. `newTag` tiene forma de sha corto de 12 hex (nada de `latest`, §2).
+#   3. Ese sha existe como commit en el historico del repo, es decir, corresponde
+#      a un commit real desde el que CI construyo — no a un valor tecleado.
+#
+# Sin esto, promocionar una rama en la que CI no llego a correr deja `pro`
+# sirviendo la imagen ANTERIOR y no produce ningun error en ninguna parte: el
+# manifiesto es valido, ArgoCD sincroniza y todo queda verde.
+#
+# Corre en `ubuntu-latest` A PROPOSITO, no en el runner autoalojado: un status
+# check obligatorio que dependa de que el runner de casa este arriba convierte
+# cualquier caida del runner en una promocion bloqueada. Este check no toca el
+# registry ni el cluster, asi que no necesita estar en la maquina.
+# ---------------------------------------------------------------------------
+name: promocion-lista
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  promocion-lista:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: El overlay de pro apunta a una imagen construida
+        shell: bash
+        run: |
+          set -euo pipefail
+          K=k8s/overlays/pro/kustomization.yaml
+          TAG=$(grep -E '^\s*newTag:' "$K" | head -1 | sed -E 's/^\s*newTag:\s*//' | tr -d '\r"'"'"' ')
+          echo "tag en $K: '$TAG'"
+
+          if [ "$TAG" = "REPLACED_BY_CI" ]; then
+            echo "::error::el overlay de pro sigue con el marcador REPLACED_BY_CI:" \
+                 "CI no ha construido nunca en esta rama. Empuja a 'release' y espera" \
+                 "a que el bump escriba el tag antes de promocionar."
+            exit 1
+          fi
+
+          if ! printf '%s' "$TAG" | grep -Eq '^[0-9a-f]{12}$'; then
+            echo "::error::'$TAG' no es un sha corto de 12 hex. PLATFORM.md §2 prohibe" \
+                 "los tags moviles y exige que el tag sea trazable al commit."
+            exit 1
+          fi
+
+          if ! git cat-file -e "${TAG}^{commit}" 2>/dev/null; then
+            echo "::error::el commit $TAG no existe en el historico de este repo." \
+                 "El tag no es trazable: nadie construyo esa imagen desde aqui."
+            exit 1
+          fi
+
+          echo "OK: pro se promocionara con la imagen del commit $TAG"
+          git --no-pager log -1 --format='  %h %s' "$TAG"
