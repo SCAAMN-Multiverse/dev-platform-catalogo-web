@@ -9,6 +9,14 @@
 #     arrancar. La imagen trae un config.json por defecto; para sobreescribirlo
 #     por entorno se monta un ConfigMap encima (ver PLATFORM.md §5). Ese es el
 #     único camino real para configurar una SPA sin reconstruir la imagen.
+#
+# El `apiBaseUrl` que trae la imagen es el marcador `REPLACED_BY_OVERLAY`, no
+# una URL plausible. Antes apuntaba a `http://api.local.localtest.me`, que es
+# el Service del OTRO scaffold: un proyecto instanciado se llevaba puesta una
+# referencia a un host que en su cluster no tiene por qué existir, y el fallo
+# aparecía en el navegador del primer usuario, no en ninguna verificación.
+# Mismo criterio que el `REPLACED_BY_CI` de los tags (§2): en el repo nunca hay
+# un valor plausible que pueda usarse por accidente.
 apiVersion: v1
 kind: ConfigMap
 metadata:

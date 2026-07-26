@@ -1,1 +1,1 @@
-{ "apiBaseUrl": "http://api.local.localtest.me", "environmentName": "local" }
+{ "apiBaseUrl": "REPLACED_BY_OVERLAY", "environmentName": "local" }

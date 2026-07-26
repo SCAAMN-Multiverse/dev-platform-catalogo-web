@@ -1,0 +1,7 @@
+# Normalización de fin de línea. El repo de plataforma ya lo hace; un proyecto
+# instanciado desde un scaffold también lo necesita, porque se clona en Windows
+# y en Linux (el runner autoalojado y el nodo del cluster son Linux).
+* text=auto eol=lf
+*.png binary
+*.ico binary
+*.jpg binary

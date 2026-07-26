@@ -4,3 +4,23 @@ dist
 .angular
 k8s
 *.md
+
+# ---------------------------------------------------------------------------
+# LA REGLA INVERSA DEL BUCLE RÁPIDO (PLATFORM.md §15). Medida en la Fase 5.
+#
+# Skaffold decide "sincronizar" o "reconstruir la imagen" mirando TODOS los
+# ficheros que han cambiado en el contexto: si UNO SOLO no encaja en ninguna
+# regla de `sync`, reconstruye entero. Un fichero cualquiera que se escriba en
+# la raíz del repo —un log, un `.env`, unas notas— convierte cada guardado en
+# un build + push + rollout: de ~2 s a 15-50 s, EN SILENCIO. El síntoma se lee
+# como "hoy la plataforma va lenta", nunca como "he dejado un fichero suelto".
+#
+# Diagnóstico de una línea, con `skaffold dev` vivo: al guardar debe imprimir
+#   Syncing 1 files ...        <- bien
+#   Starting build ...         <- hay un fichero fuera de las reglas de sync
+# ---------------------------------------------------------------------------
+*.log
+.env
+.env.*
+.skaffold*
+*.bench-backup
