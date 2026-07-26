@@ -10,7 +10,7 @@ resources:
 # tag móvil (PLATFORM.md §2).
 images:
   - name: registry.localtest.me:5111/catalogo-web
-    newTag: 8bb628ca5142
+    newTag: 2e3e156d4cbc
 
 patches:
   - path: ingress-host.yaml
